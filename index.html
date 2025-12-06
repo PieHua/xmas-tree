@@ -3,16 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Musical Xmas Tree AR</title>
+    <title>Silent Night AR Tree</title>
     <style>
         body { 
-            margin: 0; overflow: hidden; background-color: #020205; /* 背景调更黑一点，突出光感 */
+            margin: 0; overflow: hidden; background-color: #020205; /* 深夜背景 */
             font-family: 'Courier New', Courier, monospace;
             touch-action: none; overscroll-behavior: none; 
             -webkit-user-select: none; user-select: none;
         }
         #canvas-container { width: 100vw; height: 100dvh; position: absolute; top: 0; left: 0; z-index: 1; }
-        /* 视频输入保持隐藏 */
         #video-input { position: absolute; top: 0; left: 0; opacity: 0; pointer-events: none; z-index: -1; } 
         
         #ui-layer {
@@ -27,24 +26,17 @@
             background: rgba(0, 30, 15, 0.6); padding: 12px;
             border-left: 3px solid #C41E3A; backdrop-filter: blur(5px);
             border-radius: 6px; max-width: 260px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
         }
         .key-point { color: #50C878; font-weight: bold; font-size: 1.1em; }
 
-        /* 启动按钮遮罩层 */
-        #start-overlay {
-            position: absolute; top: 0; left: 0; width: 100vw; height: 100dvh;
-            background: rgba(0,0,0,0.85); z-index: 100;
-            display: flex; justify-content: center; align-items: center; flex-direction: column;
+        /* 简单的加载提示 */
+        #loader {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: #D4AF37; font-size: 14px; text-align: center;
+            width: 80%; z-index: 20; transition: opacity 0.5s;
+            background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px;
         }
-        #start-btn {
-            padding: 15px 30px; background: #C41E3A; color: #fff; border: none;
-            font-size: 1.2rem; border-radius: 30px; cursor: pointer;
-            box-shadow: 0 0 20px rgba(196, 30, 58, 0.5); transition: transform 0.2s;
-            pointer-events: auto; /* 确保能点击 */
-        }
-        #start-btn:active { transform: scale(0.95); }
-        #loader-text { color: #D4AF37; margin-top: 20px; font-size: 0.9rem; text-align: center;}
     </style>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -61,21 +53,19 @@
     </script>
 </head>
 <body>
-    <div id="start-overlay">
-        <button id="start-btn">🎵 点击播放音乐 & 启动</button>
-        <div id="loader-text">正在初始化 AI 与音频引擎...<br>请允许摄像头权限</div>
+
+    <div id="loader">
+        <div>系统初始化中...</div>
+        <div style="font-size:12px; color:#aaa; margin-top:10px;">如果长时间未响应<br>请检查浏览器摄像头权限</div>
     </div>
 
-    <audio id="bgm" loop crossorigin="anonymous" src="https://files.freemusicarchive.org/storage-freemusicarchive-org/music/ccCommunity/Ketsa/Ketsas_Christmas_Compilation/Ketsa_-_07_-_Snow_Dust.mp3"></audio>
-
     <div id="ui-layer">
-        <h1>🎄 Musical Xmas Tree</h1>
-        <div class="status" id="status-text">准备就绪</div>
+        <h1>Silent Night AR</h1>
+        <div class="status" id="status-text">等待摄像头...</div>
         <div class="instructions">
             <div>✊ / 👌 <span class="key-point">握拳或捏合</span> : 聚合圣诞树</div>
             <div>🖐 <span class="key-point">手掌张开</span> : 散开粒子</div>
             <div>👋 <span class="key-point">左右挥动</span> : 旋转视角</div>
-            <div style="margin-top:8px; color:#FFD700">✨ 辉光随音乐节奏跳动 ✨</div>
         </div>
     </div>
 
@@ -90,72 +80,59 @@
         
         // --- 配置 ---
         const CONFIG = {
-            particleCount: 2200, // 稍微增加一点粒子，让树更密
-            snowCount: 500,     // 新增：雪花数量
+            particleCount: 2000,
+            snowCount: 400, // 雪花数量
             colors: [
                 new THREE.Color('#1a5e20'), // 深绿
                 new THREE.Color('#ffd700'), // 金色
                 new THREE.Color('#d32f2f'), // 红色
-                new THREE.Color('#ffffff')  // 白色(礼盒/雪)
+                new THREE.Color('#ffffff')  // 白色
             ],
-            bloomBaseStrength: 1.0, // 基础辉光强度
-            bloomRadius: 0.6,
-            bloomThreshold: 0.1
+            bloomStrength: 1.2,
+            bloomRadius: 0.5,
+            bloomThreshold: 0.15
         };
 
         const state = {
             targetModeVal: 0.0, currentModeVal: 0.0, // 0=Scatter, 1=Tree
             rotationY: 0, targetRotationY: 0, 
-            zoom: 18, targetZoom: 18,
-            audioReactiveLevel: 0.0 // 音频反应级别
+            zoom: 18, targetZoom: 18
         };
 
-        // --- 音频分析相关变量 ---
-        let audioContext, analyser, dataArray, audioSource;
-        const audioElement = document.getElementById('bgm');
-        const startOverlay = document.getElementById('start-overlay');
-        const startBtn = document.getElementById('start-btn');
-        const statusText = document.getElementById('status-text');
-
-        // --- 1. 纹理生成 (更新：绘制礼盒) ---
+        // --- 1. 纹理生成 (含礼盒绘制) ---
         function createTextureAtlas() {
             const canvas = document.createElement('canvas');
             const size = 512;
             canvas.width = size; canvas.height = size;
             const ctx = canvas.getContext('2d');
-            ctx.clearRect(0,0,size,size); // 透明背景
+            ctx.clearRect(0,0,size,size);
             const cellSize = size / 4;
 
             for(let i=0; i<16; i++) {
                 const x = (i % 4) * cellSize; const y = Math.floor(i / 4) * cellSize;
                 const cx = x + cellSize/2; const cy = y + cellSize/2;
                 ctx.save();
-                if(i < 4) { // 0-3: 绿色光晕 (树叶)
+                if(i < 4) { // 0-3: 绿色光晕
                     const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, cellSize/2.2);
                     grad.addColorStop(0, 'rgba(45, 120, 50, 1)'); grad.addColorStop(1, 'rgba(45, 120, 50, 0)');
                     ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(cx, cy, cellSize/2.2, 0, Math.PI*2); ctx.fill();
                 } else if (i < 8) { // 4-7: 金色星星
                     ctx.fillStyle = '#FFD700'; ctx.font = `bold ${cellSize/1.4}px Arial`;
                     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; 
-                    // 加个发光效果
                     ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 10;
                     ctx.fillText('★', cx, cy);
                 } else if (i < 12) { // 8-11: 红色装饰球
-                    const grad = ctx.createRadialGradient(cx-cellSize/6, cy-cellSize/6, cellSize/10, cx, cy, cellSize/2.5);
+                    const grad = ctx.createRadialGradient(cx-5, cy-5, 2, cx, cy, cellSize/2.8);
                     grad.addColorStop(0, '#ff8a80'); grad.addColorStop(1, '#c62828');
-                    ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(cx, cy, cellSize/2.8, 0, Math.PI*2); ctx.fill();
-                    // 高光
-                    ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.beginPath(); ctx.arc(cx-cellSize/6, cy-cellSize/6, cellSize/8, 0, Math.PI*2); ctx.fill();
-                } else { // 12-15: 更新为【礼盒】
-                    const boxSize = cellSize * 0.6;
+                    ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(cx, cy, cellSize/3, 0, Math.PI*2); ctx.fill();
+                } else { // 12-15: 礼盒 🎁
+                    const boxSize = cellSize * 0.55;
                     ctx.translate(cx, cy);
-                    // 盒子主体 (随机颜色)
-                    ctx.fillStyle = `hsl(${Math.random()*360}, 70%, 60%)`;
+                    ctx.fillStyle = `hsl(${Math.random()*360}, 70%, 60%)`; // 随机色盒子
                     ctx.fillRect(-boxSize/2, -boxSize/2, boxSize, boxSize);
-                    // 丝带 (金色/白色)
-                    ctx.fillStyle = (i%2===0) ? '#FFF' : '#FFD700';
-                    ctx.fillRect(-boxSize/2, -boxSize/6, boxSize, boxSize/3); // 横向
-                    ctx.fillRect(-boxSize/6, -boxSize/2, boxSize/3, boxSize); // 纵向
+                    ctx.fillStyle = '#FFF'; // 白色丝带
+                    ctx.fillRect(-boxSize/2, -boxSize/6, boxSize, boxSize/3);
+                    ctx.fillRect(-boxSize/6, -boxSize/2, boxSize/3, boxSize);
                 }
                 ctx.restore();
             }
@@ -163,77 +140,61 @@
         }
         const commonTexture = createTextureAtlas();
 
-        // --- 2. Three.js 初始化 ---
+        // --- 2. Three.js 场景 ---
         const container = document.getElementById('canvas-container');
         const scene = new THREE.Scene();
-        // 更深的迷雾，营造夜晚感
-        scene.fog = new THREE.FogExp2(0x020205, 0.04); 
+        scene.fog = new THREE.FogExp2(0x020205, 0.035);
         const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 100);
-        camera.position.set(0, 6, 18);
+        camera.position.set(0, 5, 18);
         const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // 性能平衡
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
         container.appendChild(renderer.domElement);
 
         const composer = new EffectComposer(renderer);
         composer.addPass(new RenderPass(scene, camera));
         const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
-        bloomPass.threshold = CONFIG.bloomThreshold; 
-        bloomPass.strength = CONFIG.bloomBaseStrength; 
-        bloomPass.radius = CONFIG.bloomRadius;
+        bloomPass.threshold = CONFIG.bloomThreshold; bloomPass.strength = CONFIG.bloomStrength; bloomPass.radius = CONFIG.bloomRadius;
         composer.addPass(bloomPass);
 
-        // --- 3. 粒子系统 A: 圣诞树 (改进形态) ---
+        // --- 3. 圣诞树粒子系统 (分层结构) ---
         const treeGeo = new THREE.BufferGeometry();
         const positions = []; const targets = []; const scatters = []; 
         const colors = []; const sizes = []; const textureIndices = [];
+        const levels = 10; // 树的层数
 
-        // 新的树形生成逻辑：分层结构
-        const levels = 12; // 树的层数
-        let pIdx = 0;
-        
         for (let i = 0; i < CONFIG.particleCount; i++) {
-            // Scatter 位置 (原本的逻辑)
+            // Scatter
             const u = Math.random(); const v = Math.random();
+            const rScatter = 8 + Math.random() * 10;
             const theta = 2 * Math.PI * u; const phi = Math.acos(2 * v - 1);
-            const rScatter = 8 + Math.random() * 12;
-            scatters.push(rScatter * Math.sin(phi) * Math.cos(theta), rScatter * Math.sin(phi) * Math.sin(theta) + 6, rScatter * Math.cos(phi));
+            scatters.push(rScatter * Math.sin(phi) * Math.cos(theta), rScatter * Math.sin(phi) * Math.sin(theta) + 5, rScatter * Math.cos(phi));
             positions.push(scatters[i*3], scatters[i*3+1], scatters[i*3+2]);
 
-            // Target (Tree) 位置 - 改进版
-            // 决定当前粒子属于哪一层
+            // Target (分层树)
             const levelIdx = Math.floor((i / CONFIG.particleCount) * levels);
-            const levelProgress = (i % (CONFIG.particleCount/levels)) / (CONFIG.particleCount/levels); // 0-1 在层内
+            const levelProgress = (i % (CONFIG.particleCount/levels)) / (CONFIG.particleCount/levels);
+            const hBase = (levelIdx / levels) * 14; 
+            const h = hBase + levelProgress * 1.5; 
             
-            // 高度：越往上层越高
-            const hBase = (levelIdx / levels) * 15; 
-            // 每一层内部也有高度微调
-            const h = hBase + levelProgress * (15/levels) * 0.8; 
+            // 每一层底部宽，顶部窄
+            let baseRadius = (1.0 - h / 16) * 5.0;
+            let layerEffect = Math.pow(1.0 - levelProgress, 0.6) * 1.2; 
+            const radius = baseRadius * layerEffect + Math.random() * 0.4;
+            const angle = i * 0.1 + h * 0.5;
+            targets.push(radius * Math.cos(angle), h - 3.0, radius * Math.sin(angle));
 
-            // 半径：越往上越窄，但每一层都像一个伞盖(frustum)
-            // 基础半径随高度减小
-            let baseRadius = (1.0 - h / 16) * 5.5;
-            // 叠加分层效果：每层底部宽，顶部窄
-            let layerEffect = Math.pow(1.0 - levelProgress, 0.5) * 1.2; 
-            // 最终半径
-            const radius = baseRadius * layerEffect + Math.random() * 0.3;
-
-            const angle = i * 0.1 + h * 0.5; // 螺旋角度
-            targets.push(radius * Math.cos(angle), h - 3.5, radius * Math.sin(angle));
-
-            // Attributes (颜色与类型)
-            // 改进：装饰物倾向于分布在半径较大的外侧
-            const isOuter = layerEffect > 0.7 && Math.random() > 0.4;
+            // 装饰物逻辑 (外层多装饰)
+            const isOuter = layerEffect > 0.65;
             let c, s, ti;
-            
-            if (isOuter && Math.random() > 0.7) { // 外层的随机礼盒
-                 c = CONFIG.colors[3]; s = 0.9 + Math.random()*0.6; ti = 12+Math.floor(Math.random()*4);
-            } else if (isOuter && Math.random() > 0.5) { // 外层的星星
-                 c = CONFIG.colors[1]; s = 0.7 + Math.random()*0.5; ti = 4+Math.floor(Math.random()*4);
-            } else if (isOuter && Math.random() > 0.3) { // 外层的红球
-                 c = CONFIG.colors[2]; s = 0.6 + Math.random()*0.4; ti = 8+Math.floor(Math.random()*4);
-            } else { // 内部的绿色枝叶
-                 c = CONFIG.colors[0]; s = 0.4 + Math.random()*0.5; ti = Math.floor(Math.random()*4);
+            if (isOuter && Math.random() > 0.6) { // 礼盒
+                c = CONFIG.colors[3]; s = 0.8+Math.random()*0.4; ti = 12+Math.floor(Math.random()*4);
+            } else if (isOuter && Math.random() > 0.45) { // 星星
+                c = CONFIG.colors[1]; s = 0.6+Math.random()*0.4; ti = 4+Math.floor(Math.random()*4);
+            } else if (isOuter && Math.random() > 0.3) { // 红球
+                c = CONFIG.colors[2]; s = 0.5+Math.random()*0.3; ti = 8+Math.floor(Math.random()*4);
+            } else { // 树叶
+                c = CONFIG.colors[0]; s = 0.4+Math.random()*0.3; ti = Math.floor(Math.random()*4);
             }
             colors.push(c.r, c.g, c.b); sizes.push(s); textureIndices.push(ti);
         }
@@ -253,10 +214,8 @@
                 void main() {
                     vColor = color; vTexIdx = texIdx;
                     vec3 pos = mix(scatterPos, targetPos, uMix);
-                    // 树状态下微风吹拂效果
-                    float wind = sin(uTime * 2.0 + pos.y * 0.5) * 0.08 * uMix * (pos.y*0.1);
-                    pos.x += wind; pos.z += wind * 0.5;
-                    
+                    float wind = sin(uTime * 2.0 + pos.y * 0.5) * 0.1 * uMix; // 树的微风
+                    pos.x += wind;
                     vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
                     gl_PointSize = size * (300.0 / -mvPosition.z);
                     gl_Position = projectionMatrix * mvPosition;
@@ -270,7 +229,6 @@
                     vec2 uv = (gl_PointCoord + vec2(col, row)) / uAtlasSize;
                     vec4 texColor = texture2D(uTexture, uv);
                     if (texColor.a < 0.3) discard;
-                    // 颜色混合，并稍微提升亮度
                     gl_FragColor = vec4(texColor.rgb * vColor * 1.5, 1.0);
                 }
             `,
@@ -279,84 +237,51 @@
         const treePoints = new THREE.Points(treeGeo, treeMat);
         scene.add(treePoints);
 
-        // --- 4. 粒子系统 B: 飘雪系统 (新增) ---
+        // --- 4. 飘雪粒子系统 ---
         const snowGeo = new THREE.BufferGeometry();
         const snowPos = [];
         for(let i=0; i<CONFIG.snowCount; i++) {
-             snowPos.push(
-                 (Math.random() - 0.5) * 40, // x 范围宽一点
-                 Math.random() * 30,         // y 高度
-                 (Math.random() - 0.5) * 40  // z 深度
-             );
+             snowPos.push((Math.random()-0.5)*40, Math.random()*30, (Math.random()-0.5)*40);
         }
         snowGeo.setAttribute('position', new THREE.Float32BufferAttribute(snowPos, 3));
-        
         const snowMat = new THREE.ShaderMaterial({
             uniforms: { uTime: { value: 0 }, uTexture: { value: commonTexture } },
             vertexShader: `
-                uniform float uTime;
-                varying float vAlpha;
+                uniform float uTime; varying float vAlpha;
                 void main() {
                     vec3 pos = position;
-                    // 下落逻辑：利用取模实现循环下落
-                    float fallSpeed = 1.5 + random(vec3(position.x, 0.0, position.z)) * 2.0; // 每个雪花速度不一样
+                    float fallSpeed = 1.0 + sin(position.x)*0.5; 
                     pos.y = 30.0 - mod(position.y + uTime * fallSpeed, 30.0);
-                    // 飘动逻辑
                     pos.x += sin(uTime + position.z) * 0.5;
-                    
-                    vAlpha = 1.0 - (pos.y / 30.0); // 越往下越淡
-                    
+                    vAlpha = 1.0 - (pos.y / 30.0);
                     vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-                    gl_PointSize = (3.0 + sin(uTime*random(pos)*5.0)) * (200.0 / -mvPosition.z);
+                    gl_PointSize = 4.0 * (200.0 / -mvPosition.z);
                     gl_Position = projectionMatrix * mvPosition;
                 }
-                // 简单的随机函数
-                float random(vec3 st) { return fract(sin(dot(st.xyz, vec3(12.9898,78.233,45.164))) * 43758.5453123); }
             `,
             fragmentShader: `
                 uniform sampler2D uTexture; varying float vAlpha;
                 void main() {
-                    // 使用纹理图集中的第0个(绿色光晕)作为雪花基础，但把它变白
                     vec2 uv = gl_PointCoord / 4.0; 
                     vec4 tex = texture2D(uTexture, uv);
                     if (tex.a < 0.1) discard;
-                    // 纯白色雪花
-                    gl_FragColor = vec4(1.0, 1.0, 1.0, tex.a * vAlpha * 0.7);
+                    gl_FragColor = vec4(1.0, 1.0, 1.0, tex.a * vAlpha * 0.8);
                 }
             `,
             transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
         });
-        const snowPoints = new THREE.Points(snowGeo, snowMat);
-        scene.add(snowPoints);
+        scene.add(new THREE.Points(snowGeo, snowMat));
 
-
-        // --- 5. 音频系统初始化 ---
-        function initAudio() {
-            try {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                analyser = audioContext.createAnalyser();
-                analyser.fftSize = 256; // 采样大小，越小反应越快
-                audioSource = audioContext.createMediaElementSource(audioElement);
-                audioSource.connect(analyser);
-                analyser.connect(audioContext.destination); // 连接到扬声器
-                dataArray = new Uint8Array(analyser.frequencyBinCount);
-                audioElement.play().then(()=>{
-                     statusText.innerText = "音乐已启动，等待手势...";
-                }).catch(e => {
-                     statusText.innerText = "音乐播放失败，可能需要再点击一次";
-                     console.error("Audio play failed:", e);
-                });
-            } catch(e) {
-                console.error("Web Audio API setup failed:", e);
-                statusText.innerText = "音频系统初始化失败";
-            }
-        }
-
-        // --- 6. MediaPipe & 交互 ---
+        // --- 5. MediaPipe Hands ---
         function setupMediaPipe() {
+            const videoElement = document.getElementById('video-input');
+            const statusText = document.getElementById('status-text');
+
             if (!window.Hands || !window.Camera) {
-                loader-text.innerHTML = "AI引擎加载失败<br>请检查网络"; return;
+                document.getElementById('loader').innerHTML = "AI组件加载失败<br>请检查网络";
+                return;
             }
+
             const hands = new window.Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
             hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
 
@@ -364,90 +289,64 @@
                 if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                     const lm = results.multiHandLandmarks[0];
                     const wrist = lm[0];
-                    // 计算五指指尖到手腕的平均距离，判断是否握拳或捏合
-                    const tipIndices = [4, 8, 12, 16, 20];
+                    // 计算五指指尖到手腕的距离，判断手势
+                    const tips = [4, 8, 12, 16, 20];
                     let avgDist = 0;
-                    tipIndices.forEach(i => { avgDist += Math.hypot(lm[i].x - wrist.x, lm[i].y - wrist.y); });
+                    tips.forEach(i => { avgDist += Math.hypot(lm[i].x - wrist.x, lm[i].y - wrist.y); });
                     avgDist /= 5;
 
-                    // 改进的交互逻辑：距离小就是聚合，大就是张开
-                    if (avgDist < 0.35) { // 阈值需要根据实际体验调整
-                        state.targetModeVal = 1.0; // 聚合
+                    // 交互逻辑：距离小=握拳/捏合 -> 聚合；距离大 -> 散开
+                    if (avgDist < 0.35) { 
+                        state.targetModeVal = 1.0; 
                         statusText.innerText = "🎄 状态: 聚合 (Tree)";
                     } else {
-                        state.targetModeVal = 0.0; // 散开
+                        state.targetModeVal = 0.0; 
                         statusText.innerText = "✨ 状态: 散开 (Scatter)";
                     }
-                    // 旋转控制
                     state.targetRotationY = (lm[9].x - 0.5) * 4;
-                } else if (audioContext && audioContext.state === 'running') {
-                    statusText.innerText = "🎵 音乐播放中 - 请举手...";
+                } else {
+                    statusText.innerText = "寻找手部...";
                 }
             });
 
-            const camera = new window.Camera(document.getElementById('video-input'), {
-                onFrame: async () => { await hands.send({image: document.getElementById('video-input')}); },
+            const camera = new window.Camera(videoElement, {
+                onFrame: async () => { await hands.send({image: videoElement}); },
                 width: 320, height: 240, facingMode: 'user'
             });
+
             camera.start()
-                .then(() => { document.getElementById('loader-text').innerText = "摄像头已就绪，请点击按钮启动"; startBtn.style.background="#2D5A27"; })
-                .catch(err => { console.error(err); document.getElementById('loader-text').innerText = "摄像头被拒绝，请检查权限"; });
+                .then(() => {
+                    document.getElementById('loader').style.display = 'none'; // 自动隐藏加载层
+                    statusText.innerText = "准备就绪";
+                })
+                .catch(err => {
+                    console.error(err);
+                    document.getElementById('loader').innerText = "需要摄像头权限 (请确保是HTTPS)";
+                });
         }
 
-        // --- 7. 动画循环 ---
+        // --- 6. 动画 ---
         const clock = new THREE.Clock();
         function animate() {
             requestAnimationFrame(animate);
-            const time = clock.getElapsedTime();
             const dt = 0.016;
+            const time = clock.getElapsedTime();
 
-            // A. 音频分析
-            if (analyser) {
-                analyser.getByteFrequencyData(dataArray);
-                // 计算平均音量/能量
-                let sum = 0;
-                // 只取低频和中频部分，节奏感更强
-                for(let i = 0; i < dataArray.length * 0.6; i++) { sum += dataArray[i]; }
-                const avgLevel = sum / (dataArray.length * 0.6);
-                // 平滑过渡
-                state.audioReactiveLevel += (avgLevel / 255.0 - state.audioReactiveLevel) * 0.2;
-                
-                // 将音频能量映射到辉光强度 (基础强度 + 音频增益)
-                bloomPass.strength = CONFIG.bloomBaseStrength + state.audioReactiveLevel * 2.5;
-                // 也可以让树稍微根据音乐缩放一点点
-                treePoints.scale.setScalar(1.0 + state.audioReactiveLevel * 0.05);
-            }
-
-            // B. 状态平滑过渡
             state.currentModeVal += (state.targetModeVal - state.currentModeVal) * 2.5 * dt;
             state.rotationY += (state.targetRotationY - state.rotationY) * 3.0 * dt;
 
-            // C. 更新 Uniforms
+            // Update Uniforms
             treeMat.uniforms.uTime.value = time;
             treeMat.uniforms.uMix.value = state.currentModeVal;
             snowMat.uniforms.uTime.value = time;
 
-            // D. 应用变换
-            treePoints.rotation.y = state.rotationY;
-            // 缓慢自动旋转，增加动感
-            treePoints.rotation.y += time * 0.05;
-            snowPoints.rotation.y = time * 0.02; // 雪花整体也要慢慢转
-
+            // Apply transforms
+            treePoints.rotation.y = state.rotationY + time * 0.05; // 加上自动慢速旋转
+            camera.position.z = state.zoom;
             camera.lookAt(0, 5, 0);
+
             composer.render();
         }
-
-        // --- 启动流程 ---
-        startBtn.addEventListener('click', () => {
-            // 必须在用户点击事件中恢复/启动 AudioContext
-            if (!audioContext) initAudio();
-            else if (audioContext.state === 'suspended') audioContext.resume();
-            
-            startOverlay.style.opacity = '0';
-            startOverlay.style.pointerEvents = 'none';
-            // 延迟移除
-            setTimeout(() => startOverlay.remove(), 1000);
-        });
 
         setupMediaPipe();
         animate();
