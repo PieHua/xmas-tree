@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Silent Night AR Tree</title>
+    <title>Pure Tree AR</title>
     <style>
         body { 
-            margin: 0; overflow: hidden; background-color: #020205; /* 深夜背景 */
+            margin: 0; overflow: hidden; background-color: #010103; /* 纯净极夜黑背景 */
             font-family: 'Courier New', Courier, monospace;
             touch-action: none; overscroll-behavior: none; 
             -webkit-user-select: none; user-select: none;
@@ -28,21 +28,16 @@
             border-radius: 6px; max-width: 260px;
         }
         .key-point { color: #50C878; font-weight: bold; font-size: 1.1em; }
-
-        /* 简单的加载提示 */
         #loader {
-            position: absolute; top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
             color: #D4AF37; font-size: 14px; text-align: center;
             width: 80%; z-index: 20; transition: opacity 0.5s;
             background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px;
         }
     </style>
-
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-
     <script type="importmap">
         {
             "imports": {
@@ -53,14 +48,12 @@
     </script>
 </head>
 <body>
-
     <div id="loader">
-        <div>系统初始化中...</div>
+        <div>构建核心组件中...</div>
         <div style="font-size:12px; color:#aaa; margin-top:10px;">如果长时间未响应<br>请检查浏览器摄像头权限</div>
     </div>
-
     <div id="ui-layer">
-        <h1>Silent Night AR</h1>
+        <h1>Pure Tree AR</h1>
         <div class="status" id="status-text">等待摄像头...</div>
         <div class="instructions">
             <div>✊ / 👌 <span class="key-point">握拳或捏合</span> : 聚合圣诞树</div>
@@ -68,7 +61,6 @@
             <div>👋 <span class="key-point">左右挥动</span> : 旋转视角</div>
         </div>
     </div>
-
     <video id="video-input" playsinline webkit-playsinline muted></video>
     <div id="canvas-container"></div>
 
@@ -78,59 +70,53 @@
         import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
         import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
         
-        // --- 配置 ---
+        // --- 配置 (做减法) ---
         const CONFIG = {
-            particleCount: 2000,
-            snowCount: 400, // 雪花数量
+            particleCount: 1500, // 降低粒子数，提高手机性能
+            // snowCount 已移除
             colors: [
-                new THREE.Color('#1a5e20'), // 深绿
+                new THREE.Color('#0d4d15'), // 更深沉的松针绿
                 new THREE.Color('#ffd700'), // 金色
                 new THREE.Color('#d32f2f'), // 红色
-                new THREE.Color('#ffffff')  // 白色
+                new THREE.Color('#ffffff')  // 白色(礼盒)
             ],
-            bloomStrength: 1.2,
+            bloomStrength: 1.3, // 略微增强辉光，弥补粒子减少
             bloomRadius: 0.5,
-            bloomThreshold: 0.15
+            bloomThreshold: 0.12
         };
 
         const state = {
             targetModeVal: 0.0, currentModeVal: 0.0, // 0=Scatter, 1=Tree
             rotationY: 0, targetRotationY: 0, 
-            zoom: 18, targetZoom: 18
+            zoom: 17, targetZoom: 17
         };
 
-        // --- 1. 纹理生成 (含礼盒绘制) ---
+        // --- 1. 纹理生成 (保留精美的礼盒) ---
         function createTextureAtlas() {
             const canvas = document.createElement('canvas');
-            const size = 512;
-            canvas.width = size; canvas.height = size;
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0,0,size,size);
+            const size = 512; canvas.width = size; canvas.height = size;
+            const ctx = canvas.getContext('2d'); ctx.clearRect(0,0,size,size);
             const cellSize = size / 4;
-
             for(let i=0; i<16; i++) {
                 const x = (i % 4) * cellSize; const y = Math.floor(i / 4) * cellSize;
-                const cx = x + cellSize/2; const cy = y + cellSize/2;
-                ctx.save();
-                if(i < 4) { // 0-3: 绿色光晕
-                    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, cellSize/2.2);
-                    grad.addColorStop(0, 'rgba(45, 120, 50, 1)'); grad.addColorStop(1, 'rgba(45, 120, 50, 0)');
-                    ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(cx, cy, cellSize/2.2, 0, Math.PI*2); ctx.fill();
-                } else if (i < 8) { // 4-7: 金色星星
+                const cx = x + cellSize/2; const cy = y + cellSize/2; ctx.save();
+                if(i < 4) { // 绿色光晕(核心)
+                    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, cellSize/2.1);
+                    grad.addColorStop(0, 'rgba(30, 100, 35, 1)'); grad.addColorStop(1, 'rgba(30, 100, 35, 0)');
+                    ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(cx, cy, cellSize/2.1, 0, Math.PI*2); ctx.fill();
+                } else if (i < 8) { // 星星
                     ctx.fillStyle = '#FFD700'; ctx.font = `bold ${cellSize/1.4}px Arial`;
-                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; 
-                    ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 10;
+                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 8;
                     ctx.fillText('★', cx, cy);
-                } else if (i < 12) { // 8-11: 红色装饰球
+                } else if (i < 12) { // 红球
                     const grad = ctx.createRadialGradient(cx-5, cy-5, 2, cx, cy, cellSize/2.8);
                     grad.addColorStop(0, '#ff8a80'); grad.addColorStop(1, '#c62828');
                     ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(cx, cy, cellSize/3, 0, Math.PI*2); ctx.fill();
-                } else { // 12-15: 礼盒 🎁
-                    const boxSize = cellSize * 0.55;
-                    ctx.translate(cx, cy);
-                    ctx.fillStyle = `hsl(${Math.random()*360}, 70%, 60%)`; // 随机色盒子
+                } else { // 礼盒 🎁
+                    const boxSize = cellSize * 0.55; ctx.translate(cx, cy);
+                    ctx.fillStyle = `hsl(${Math.random()*360}, 70%, 60%)`;
                     ctx.fillRect(-boxSize/2, -boxSize/2, boxSize, boxSize);
-                    ctx.fillStyle = '#FFF'; // 白色丝带
+                    ctx.fillStyle = '#FFF';
                     ctx.fillRect(-boxSize/2, -boxSize/6, boxSize, boxSize/3);
                     ctx.fillRect(-boxSize/6, -boxSize/2, boxSize/3, boxSize);
                 }
@@ -143,11 +129,12 @@
         // --- 2. Three.js 场景 ---
         const container = document.getElementById('canvas-container');
         const scene = new THREE.Scene();
-        scene.fog = new THREE.FogExp2(0x020205, 0.035);
+        scene.fog = new THREE.FogExp2(0x010103, 0.03); // 纯净黑色迷雾
         const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 100);
-        camera.position.set(0, 5, 18);
+        camera.position.set(0, 5, 17);
         const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
         renderer.setSize(window.innerWidth, window.innerHeight);
+        // 稍微限制像素比，确保在高端安卓/iOS上也能流畅
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
         container.appendChild(renderer.domElement);
 
@@ -157,44 +144,67 @@
         bloomPass.threshold = CONFIG.bloomThreshold; bloomPass.strength = CONFIG.bloomStrength; bloomPass.radius = CONFIG.bloomRadius;
         composer.addPass(bloomPass);
 
-        // --- 3. 圣诞树粒子系统 (分层结构) ---
+        // --- 3. 核心：拟态树枝粒子系统 ---
         const treeGeo = new THREE.BufferGeometry();
         const positions = []; const targets = []; const scatters = []; 
         const colors = []; const sizes = []; const textureIndices = [];
-        const levels = 10; // 树的层数
+        
+        const tiers = 14; // 增加层数，让树更密实
 
         for (let i = 0; i < CONFIG.particleCount; i++) {
-            // Scatter
+            // Scatter (散开态) - 保持不变
             const u = Math.random(); const v = Math.random();
-            const rScatter = 8 + Math.random() * 10;
+            const rScatter = 7 + Math.random() * 11;
             const theta = 2 * Math.PI * u; const phi = Math.acos(2 * v - 1);
             scatters.push(rScatter * Math.sin(phi) * Math.cos(theta), rScatter * Math.sin(phi) * Math.sin(theta) + 5, rScatter * Math.cos(phi));
             positions.push(scatters[i*3], scatters[i*3+1], scatters[i*3+2]);
 
-            // Target (分层树)
-            const levelIdx = Math.floor((i / CONFIG.particleCount) * levels);
-            const levelProgress = (i % (CONFIG.particleCount/levels)) / (CONFIG.particleCount/levels);
-            const hBase = (levelIdx / levels) * 14; 
-            const h = hBase + levelProgress * 1.5; 
-            
-            // 每一层底部宽，顶部窄
-            let baseRadius = (1.0 - h / 16) * 5.0;
-            let layerEffect = Math.pow(1.0 - levelProgress, 0.6) * 1.2; 
-            const radius = baseRadius * layerEffect + Math.random() * 0.4;
-            const angle = i * 0.1 + h * 0.5;
-            targets.push(radius * Math.cos(angle), h - 3.0, radius * Math.sin(angle));
+            // Target (树态) - 全新算法！
+            // 1. 决定层级和高度比例 (0底 - 1顶)
+            const tierIdx = Math.floor((i / CONFIG.particleCount) * tiers);
+            const hRatio = tierIdx / tiers; 
+            // 树高范围 -2 到 13
+            const h = -2 + hRatio * 15 + Math.random() * (15/tiers) * 0.8; 
 
-            // 装饰物逻辑 (外层多装饰)
-            const isOuter = layerEffect > 0.65;
+            // 2. 计算这一层的最大半径 (底部宽，顶部尖)
+            // 使用非线性曲线让树形更有机
+            const maxRadiusAtH = Math.pow(1.0 - hRatio, 1.2) * 6.5;
+
+            // 3. 关键：模拟树枝分叉 (Clustering)
+            // 底部有更多分叉(如12个)，顶部更少(如5个)
+            const branches = 5 + Math.floor((1.0 - hRatio) * 7); 
+            // 将粒子锁定在特定的角度上，形成“枝条”感，而不是均匀圆环
+            const discreteAngleStep = Math.floor(Math.random() * branches) / branches;
+            const angleBase = discreteAngleStep * Math.PI * 2;
+            // 在基础角度上增加一点随机抖动，让树枝有宽度
+            const angle = angleBase + (Math.random() - 0.5) * 0.4;
+
+            // 4. 粒子在树枝上的位置 (0在树干，1在末梢)
+            const positionOnBranch = Math.random(); 
+            // 半径随位置增加
+            const r = positionOnBranch * maxRadiusAtH;
+            
+            // 5. 模拟重力下垂 (Droop)
+            // 离树干越远，下垂越厉害
+            const droopY = h - Math.pow(positionOnBranch, 2) * 1.5;
+
+            targets.push(r * Math.cos(angle), droopY, r * Math.sin(angle));
+
+            // Attributes (装饰逻辑优化)
+            // 只有在树枝末梢 (positionOnBranch > 0.75) 才长装饰品
+            const isTip = positionOnBranch > 0.75;
             let c, s, ti;
-            if (isOuter && Math.random() > 0.6) { // 礼盒
-                c = CONFIG.colors[3]; s = 0.8+Math.random()*0.4; ti = 12+Math.floor(Math.random()*4);
-            } else if (isOuter && Math.random() > 0.45) { // 星星
-                c = CONFIG.colors[1]; s = 0.6+Math.random()*0.4; ti = 4+Math.floor(Math.random()*4);
-            } else if (isOuter && Math.random() > 0.3) { // 红球
-                c = CONFIG.colors[2]; s = 0.5+Math.random()*0.3; ti = 8+Math.floor(Math.random()*4);
-            } else { // 树叶
-                c = CONFIG.colors[0]; s = 0.4+Math.random()*0.3; ti = Math.floor(Math.random()*4);
+            // 略微增加粒子基础大小，因为数量减少了
+            const baseSizeScale = 1.2; 
+
+            if (isTip && Math.random() > 0.6) { // 礼盒 (最大)
+                c = CONFIG.colors[3]; s = (0.9+Math.random()*0.5)*baseSizeScale; ti = 12+Math.floor(Math.random()*4);
+            } else if (isTip && Math.random() > 0.4) { // 星星
+                c = CONFIG.colors[1]; s = (0.7+Math.random()*0.5)*baseSizeScale; ti = 4+Math.floor(Math.random()*4);
+            } else if (isTip && Math.random() > 0.2) { // 红球
+                c = CONFIG.colors[2]; s = (0.6+Math.random()*0.4)*baseSizeScale; ti = 8+Math.floor(Math.random()*4);
+            } else { // 内部针叶 (最小，最密)
+                c = CONFIG.colors[0]; s = (0.4+Math.random()*0.4)*baseSizeScale; ti = Math.floor(Math.random()*4);
             }
             colors.push(c.r, c.g, c.b); sizes.push(s); textureIndices.push(ti);
         }
@@ -214,10 +224,12 @@
                 void main() {
                     vColor = color; vTexIdx = texIdx;
                     vec3 pos = mix(scatterPos, targetPos, uMix);
-                    float wind = sin(uTime * 2.0 + pos.y * 0.5) * 0.1 * uMix; // 树的微风
-                    pos.x += wind;
+                    // 极简的微风效果，只在树形态下启用
+                    float wind = sin(uTime * 1.5 + pos.y * 0.3) * 0.06 * uMix * (pos.y * 0.1);
+                    pos.x += wind; pos.z += wind * 0.5;
                     vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-                    gl_PointSize = size * (300.0 / -mvPosition.z);
+                    // 调整点大小计算系数，适应移动端
+                    gl_PointSize = size * (320.0 / -mvPosition.z);
                     gl_Position = projectionMatrix * mvPosition;
                 }
             `,
@@ -228,134 +240,62 @@
                     float col = mod(vTexIdx, uAtlasSize); float row = floor(vTexIdx / uAtlasSize);
                     vec2 uv = (gl_PointCoord + vec2(col, row)) / uAtlasSize;
                     vec4 texColor = texture2D(uTexture, uv);
-                    if (texColor.a < 0.3) discard;
-                    gl_FragColor = vec4(texColor.rgb * vColor * 1.5, 1.0);
+                    // 提高透明度剔除阈值，让粒子边缘更干净
+                    if (texColor.a < 0.4) discard;
+                    // 稍微增强亮度和饱和度
+                    gl_FragColor = vec4(texColor.rgb * vColor * 1.6, 1.0);
                 }
             `,
             transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
         });
-        const treePoints = new THREE.Points(treeGeo, treeMat);
-        scene.add(treePoints);
+        scene.add(new THREE.Points(treeGeo, treeMat));
 
-        // --- 4. 飘雪粒子系统 ---
-        const snowGeo = new THREE.BufferGeometry();
-        const snowPos = [];
-        for(let i=0; i<CONFIG.snowCount; i++) {
-             snowPos.push((Math.random()-0.5)*40, Math.random()*30, (Math.random()-0.5)*40);
-        }
-        snowGeo.setAttribute('position', new THREE.Float32BufferAttribute(snowPos, 3));
-        const snowMat = new THREE.ShaderMaterial({
-            uniforms: { uTime: { value: 0 }, uTexture: { value: commonTexture } },
-            vertexShader: `
-                uniform float uTime; varying float vAlpha;
-                void main() {
-                    vec3 pos = position;
-                    float fallSpeed = 1.0 + sin(position.x)*0.5; 
-                    pos.y = 30.0 - mod(position.y + uTime * fallSpeed, 30.0);
-                    pos.x += sin(uTime + position.z) * 0.5;
-                    vAlpha = 1.0 - (pos.y / 30.0);
-                    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-                    gl_PointSize = 4.0 * (200.0 / -mvPosition.z);
-                    gl_Position = projectionMatrix * mvPosition;
-                }
-            `,
-            fragmentShader: `
-                uniform sampler2D uTexture; varying float vAlpha;
-                void main() {
-                    vec2 uv = gl_PointCoord / 4.0; 
-                    vec4 tex = texture2D(uTexture, uv);
-                    if (tex.a < 0.1) discard;
-                    gl_FragColor = vec4(1.0, 1.0, 1.0, tex.a * vAlpha * 0.8);
-                }
-            `,
-            transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
-        });
-        scene.add(new THREE.Points(snowGeo, snowMat));
-
-        // --- 5. MediaPipe Hands ---
+        // --- 4. MediaPipe Hands (逻辑保持不变) ---
         function setupMediaPipe() {
             const videoElement = document.getElementById('video-input');
             const statusText = document.getElementById('status-text');
-
-            if (!window.Hands || !window.Camera) {
-                document.getElementById('loader').innerHTML = "AI组件加载失败<br>请检查网络";
-                return;
-            }
-
+            if (!window.Hands || !window.Camera) { document.getElementById('loader').innerHTML = "AI组件失败<br>请刷新重试"; return; }
             const hands = new window.Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
             hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-
             hands.onResults((results) => {
                 if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                     const lm = results.multiHandLandmarks[0];
                     const wrist = lm[0];
-                    // 计算五指指尖到手腕的距离，判断手势
                     const tips = [4, 8, 12, 16, 20];
-                    let avgDist = 0;
-                    tips.forEach(i => { avgDist += Math.hypot(lm[i].x - wrist.x, lm[i].y - wrist.y); });
+                    let avgDist = 0; tips.forEach(i => { avgDist += Math.hypot(lm[i].x - wrist.x, lm[i].y - wrist.y); });
                     avgDist /= 5;
-
-                    // 交互逻辑：距离小=握拳/捏合 -> 聚合；距离大 -> 散开
-                    if (avgDist < 0.35) { 
-                        state.targetModeVal = 1.0; 
-                        statusText.innerText = "🎄 状态: 聚合 (Tree)";
-                    } else {
-                        state.targetModeVal = 0.0; 
-                        statusText.innerText = "✨ 状态: 散开 (Scatter)";
-                    }
-                    state.targetRotationY = (lm[9].x - 0.5) * 4;
-                } else {
-                    statusText.innerText = "寻找手部...";
-                }
+                    if (avgDist < 0.35) { state.targetModeVal = 1.0; statusText.innerText = "🎄 状态: 聚合 (Tree)"; } 
+                    else { state.targetModeVal = 0.0; statusText.innerText = "✨ 状态: 散开 (Scatter)"; }
+                    state.targetRotationY = (lm[9].x - 0.5) * 5;
+                } else { statusText.innerText = "寻找手部..."; }
             });
-
             const camera = new window.Camera(videoElement, {
                 onFrame: async () => { await hands.send({image: videoElement}); },
                 width: 320, height: 240, facingMode: 'user'
             });
-
-            camera.start()
-                .then(() => {
-                    document.getElementById('loader').style.display = 'none'; // 自动隐藏加载层
-                    statusText.innerText = "准备就绪";
-                })
-                .catch(err => {
-                    console.error(err);
-                    document.getElementById('loader').innerText = "需要摄像头权限 (请确保是HTTPS)";
-                });
+            camera.start().then(() => { document.getElementById('loader').style.display = 'none'; statusText.innerText = "准备就绪"; })
+                .catch(err => { console.error(err); document.getElementById('loader').innerText = "需要摄像头权限"; });
         }
 
-        // --- 6. 动画 ---
+        // --- 5. 动画 ---
         const clock = new THREE.Clock();
         function animate() {
             requestAnimationFrame(animate);
-            const dt = 0.016;
-            const time = clock.getElapsedTime();
-
+            const dt = 0.016; const time = clock.getElapsedTime();
             state.currentModeVal += (state.targetModeVal - state.currentModeVal) * 2.5 * dt;
             state.rotationY += (state.targetRotationY - state.rotationY) * 3.0 * dt;
-
-            // Update Uniforms
             treeMat.uniforms.uTime.value = time;
             treeMat.uniforms.uMix.value = state.currentModeVal;
-            snowMat.uniforms.uTime.value = time;
-
-            // Apply transforms
-            treePoints.rotation.y = state.rotationY + time * 0.05; // 加上自动慢速旋转
+            // 缓慢自动旋转
+            treeGeo.rotation.y = state.rotationY + time * 0.04;
             camera.position.z = state.zoom;
-            camera.lookAt(0, 5, 0);
-
+            camera.lookAt(0, 5.5, 0); // 稍微看高一点
             composer.render();
         }
-
-        setupMediaPipe();
-        animate();
-        
+        setupMediaPipe(); animate();
         window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            composer.setSize(window.innerWidth, window.innerHeight);
+            camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight); composer.setSize(window.innerWidth, window.innerHeight);
         });
     </script>
 </body>
