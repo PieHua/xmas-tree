@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobile Gesture Xmas Tree</title>
+    <style>
+        /* 1. 移动端基础设置：防止滚动和橡皮筋效果 */
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: #050505; 
+            font-family: 'Courier New', Courier, monospace;
+            touch-action: none; /* 禁止触摸默认行为 */
+            overscroll-behavior: none; /* 禁止橡皮筋效果 */
+            -webkit-user-select: none; /* 禁止选中文本 */
+            user-select: none;
+        }
+
+        /* 使用 dvh (Dynamic Viewport Height) 适配移动端地址栏变化 */
+        #canvas-container { 
+            width: 100vw; 
+            height: 100dvh; 
+            position: absolute; 
+            top: 0; left: 0; 
+            z-index: 1; 
+        }
+
+        /* 隐藏视频元素，但必须存在 */
+        #video-input { 
+            position: absolute; 
+            top: 0; left: 0; 
+            opacity: 0; 
+            pointer-events: none; 
+            z-index: -1;
+        } 
+        
+        /* UI 适配移动端尺寸 */
+        #ui-layer {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            right: 15px; /* 防止溢出 */
+            z-index: 10;
+            color: rgba(212, 175, 55, 0.9);
+            pointer-events: none;
+            text-shadow: 0 0 10px rgba(212, 175, 55, 0.5);
+        }
+        h1 { margin: 0; font-size: 1.2rem; letter-spacing: 1px; }
+        .status { margin-top: 5px; font-size: 0.8rem; color: #fff; opacity: 0.8; }
+        
+        /* 简化版的操作指引，不遮挡屏幕 */
+        .instructions {
+            margin-top: 15px;
+            font-size: 0.75rem;
+            line-height: 1.5;
+            background: rgba(0, 20, 10, 0.5);
+            padding: 10px;
+            border-left: 2px solid #C41E3A;
+            backdrop-filter: blur(4px);
+            border-radius: 4px;
+            max-width: 250px;
+        }
+        .key-point { color: #50C878; font-weight: bold; }
+
+        /* 加载指示器 */
+        #loader {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: #D4AF37; font-size: 16px;
+            text-align: center;
+            width: 80%;
+            z-index: 20; transition: opacity 0.5s;
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 10px;
+        }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "@mediapipe/hands": "https://unpkg.com/@mediapipe/hands@0.4.1675469240/hands.js",
+                "@mediapipe/camera_utils": "https://unpkg.com/@mediapipe/camera_utils/camera_utils.js"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div id="loader">
+        正在初始化 AI 引擎...<br><br>
+        <span style="font-size:12px; color:#aaa;">请允许摄像头权限<br>保持手机竖屏操作</span>
+    </div>
+
+    <div id="ui-layer">
+        <h1>Xmas Tree AR</h1>
+        <div class="status" id="status-text">摄像头启动中...</div>
+        <div class="instructions">
+            <div>✊ <span class="key-point">握拳</span> : 聚合成树</div>
+            <div>🖐 <span class="key-point">张开</span> : 炸开照片</div>
+            <div>👋 <span class="key-point">左右</span> : 旋转视角</div>
+            <div>👌 <span class="key-point">捏合</span> : 放大观看</div>
+        </div>
+    </div>
+
+    <video id="video-input" playsinline webkit-playsinline muted></video>
+    <div id="canvas-container"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        
+        // --- 1. 配置 (针对移动端降级) ---
+        const CONFIG = {
+            particleCount: 1800, // 降低粒子数以保证 FPS
+            colors: [
+                new THREE.Color('#2D5A27'),
+                new THREE.Color('#D4AF37'),
+                new THREE.Color('#C41E3A'),
+                new THREE.Color('#FFFFFF')
+            ],
+            bloomStrength: 1.2, // 稍微降低辉光强度
+            bloomRadius: 0.5,
+            bloomThreshold: 0.15
+        };
+
+        const state = {
+            mode: 'scatter',
+            targetModeVal: 0.0,
+            currentModeVal: 0.0,
+            rotationY: 0,
+            targetRotationY: 0,
+            zoom: 18, // 手机屏幕小，初始距离拉远一点
+            targetZoom: 18
+        };
+
+        // --- 2. 纹理生成 (保持不变) ---
+        function createTextureAtlas() {
+            const canvas = document.createElement('canvas');
+            const size = 512; // 降低纹理分辨率
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = 'rgba(0,0,0,0)';
+            ctx.fillRect(0,0,size,size);
+            const cellSize = size / 4;
+
+            for(let i=0; i<16; i++) {
+                const x = (i % 4) * cellSize;
+                const y = Math.floor(i / 4) * cellSize;
+                const cx = x + cellSize/2;
+                const cy = y + cellSize/2;
+                ctx.save();
+                if(i < 4) {
+                    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, cellSize/2.5);
+                    grad.addColorStop(0, 'rgba(45, 90, 39, 1)');
+                    grad.addColorStop(1, 'rgba(45, 90, 39, 0)');
+                    ctx.fillStyle = grad;
+                    ctx.beginPath(); ctx.arc(cx, cy, cellSize/2.5, 0, Math.PI*2); ctx.fill();
+                } else if (i < 8) {
+                    ctx.fillStyle = '#D4AF37';
+                    ctx.font = `${cellSize/1.5}px Arial`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('★', cx, cy);
+                } else if (i < 12) {
+                    const grad = ctx.createRadialGradient(cx-5, cy-5, 2, cx, cy, cellSize/3);
+                    grad.addColorStop(0, '#ff6666');
+                    grad.addColorStop(1, '#C41E3A');
+                    ctx.fillStyle = grad;
+                    ctx.beginPath(); ctx.arc(cx, cy, cellSize/3, 0, Math.PI*2); ctx.fill();
+                } else {
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.fillRect(cx - cellSize/3, cy - cellSize/3, cellSize/1.5, cellSize/1.3);
+                    ctx.fillStyle = `hsl(${Math.random()*360}, 50%, 50%)`;
+                    ctx.fillRect(cx - cellSize/3 + 3, cy - cellSize/3 + 3, cellSize/1.5 - 6, cellSize/1.5 - 12);
+                }
+                ctx.restore();
+            }
+            const texture = new THREE.CanvasTexture(canvas);
+            return texture;
+        }
+
+        // --- 3. Three.js 场景 ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050505, 0.03);
+
+        const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 5, 18);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // 限制像素比，防止高分屏卡顿
+        container.appendChild(renderer.domElement);
+
+        const renderScene = new RenderPass(scene, camera);
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = CONFIG.bloomThreshold;
+        bloomPass.strength = CONFIG.bloomStrength;
+        bloomPass.radius = CONFIG.bloomRadius;
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        // --- 4. 粒子系统 ---
+        const geometry = new THREE.BufferGeometry();
+        const positions = [];
+        const targets = [];
+        const scatters = [];
+        const colors = [];
+        const sizes = [];
+        const textureIndices = [];
+        const textureAtlas = createTextureAtlas();
+
+        for (let i = 0; i < CONFIG.particleCount; i++) {
+            // 散开位置
+            const u = Math.random();
+            const v = Math.random();
+            const theta = 2 * Math.PI * u;
+            const phi = Math.acos(2 * v - 1);
+            const r = 8 + Math.random() * 10;
+            const sx = r * Math.sin(phi) * Math.cos(theta);
+            const sy = r * Math.sin(phi) * Math.sin(theta) + 5;
+            const sz = r * Math.cos(phi);
+            scatters.push(sx, sy, sz);
+
+            // 树位置 (稍微紧凑一点，因为屏幕小)
+            const h = Math.random() * 14; 
+            const angle = h * 5 + Math.random() * 2;
+            const radiusAtH = (14 - h) * 0.35 + Math.random() * 0.4;
+            const tx = radiusAtH * Math.cos(angle);
+            const ty = h - 3;
+            const tz = radiusAtH * Math.sin(angle);
+            targets.push(tx, ty, tz);
+
+            positions.push(sx, sy, sz);
+
+            // 颜色分配
+            const type = Math.random();
+            let color, size, texIdx;
+            if (type > 0.9) { 
+                color = CONFIG.colors[3]; size = 0.8 + Math.random()*0.5; texIdx = 12 + Math.floor(Math.random()*4);
+            } else if (type > 0.75) { 
+                color = CONFIG.colors[2]; size = 0.5 + Math.random()*0.3; texIdx = 8 + Math.floor(Math.random()*4);
+            } else if (type > 0.55) { 
+                color = CONFIG.colors[1]; size = 0.4 + Math.random()*0.4; texIdx = 4 + Math.floor(Math.random()*4);
+            } else { 
+                color = CONFIG.colors[0]; size = 0.25 + Math.random()*0.3; texIdx = Math.floor(Math.random()*4);
+            }
+            colors.push(color.r, color.g, color.b);
+            sizes.push(size);
+            textureIndices.push(texIdx);
+        }
+
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute('targetPos', new THREE.Float32BufferAttribute(targets, 3));
+        geometry.setAttribute('scatterPos', new THREE.Float32BufferAttribute(scatters, 3));
+        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+        geometry.setAttribute('texIdx', new THREE.Float32BufferAttribute(textureIndices, 1));
+
+        const material = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 },
+                uMix: { value: 0 },
+                uTexture: { value: textureAtlas },
+                uAtlasSize: { value: 4.0 }
+            },
+            vertexShader: `
+                uniform float uTime;
+                uniform float uMix;
+                attribute vec3 targetPos;
+                attribute vec3 scatterPos;
+                attribute vec3 color;
+                attribute float size;
+                attribute float texIdx;
+                varying vec3 vColor;
+                varying float vTexIdx;
+                void main() {
+                    vColor = color;
+                    vTexIdx = texIdx;
+                    vec3 pos = mix(scatterPos, targetPos, uMix);
+                    float noise = sin(uTime * 3.0 + pos.x * 0.5) * 0.1 * (1.0 - uMix); 
+                    pos.y += noise;
+                    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                    gl_PointSize = size * (350.0 / -mvPosition.z); // 调整粒子大小系数
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D uTexture;
+                uniform float uAtlasSize;
+                varying vec3 vColor;
+                varying float vTexIdx;
+                void main() {
+                    float col = mod(vTexIdx, uAtlasSize);
+                    float row = floor(vTexIdx / uAtlasSize);
+                    vec2 uv = (gl_PointCoord + vec2(col, row)) / uAtlasSize;
+                    vec4 texColor = texture2D(uTexture, uv);
+                    if (texColor.a < 0.2) discard;
+                    gl_FragColor = vec4(texColor.rgb * vColor, 1.0);
+                    gl_FragColor.rgb *= 1.2;
+                }
+            `,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending
+        });
+
+        const points = new THREE.Points(geometry, material);
+        scene.add(points);
+
+        // --- 5. MediaPipe Hands (移动端配置) ---
+        const videoElement = document.getElementById('video-input');
+        const statusText = document.getElementById('status-text');
+
+        function detectGesture(landmarks) {
+            const thumbTip = landmarks[4];
+            const indexTip = landmarks[8];
+            const middleTip = landmarks[12];
+            const ringTip = landmarks[16];
+            const pinkyTip = landmarks[20];
+            const wrist = landmarks[0];
+
+            // 宽松的握拳检测 (手机摄像头可能不稳定)
+            const isFist = [indexTip, middleTip, ringTip, pinkyTip].every(tip => {
+                return Math.hypot(tip.x - wrist.x, tip.y - wrist.y) < 0.2; // 稍微放宽阈值
+            });
+            if (isFist) return 'FIST';
+
+            const pinchDist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
+            if (pinchDist < 0.08) return 'PINCH'; // 稍微放宽阈值
+
+            return 'OPEN';
+        }
+
+        async function setupMediaPipe() {
+            if (!window.Hands) {
+                const { Hands } = await import('https://unpkg.com/@mediapipe/hands@0.4.1675469240/hands.js');
+                window.Hands = Hands;
+            }
+
+            const hands = new window.Hands({locateFile: (file) => {
+                return `https://unpkg.com/@mediapipe/hands@0.4.1675469240/${file}`;
+            }});
+
+            // 移动端使用 lighter model 保证速度
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 0, // 0 = Lite (最快), 1 = Full
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            hands.onResults(onResults);
+
+            const cameraUtils = await import("https://unpkg.com/@mediapipe/camera_utils/camera_utils.js");
+            
+            // 3. 关键：针对手机摄像头的低分辨率配置
+            const cam = new cameraUtils.Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({image: videoElement});
+                },
+                width: 320,  // 降低处理分辨率
+                height: 240, 
+                facingMode: 'user' // 强制使用前置
+            });
+            
+            cam.start()
+               .then(() => { 
+                   document.getElementById('loader').style.opacity = '0';
+                   setTimeout(()=> document.getElementById('loader').style.display='none', 500);
+               })
+               .catch(err => {
+                    console.error(err);
+                    document.getElementById('loader').innerText = "需要摄像头权限 (请确保使用 HTTPS)";
+               });
+        }
+
+        function onResults(results) {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                const gesture = detectGesture(landmarks);
+                
+                if (gesture === 'FIST') {
+                    state.targetModeVal = 1.0;
+                    statusText.innerText = "状态: 聚合 (Tree)";
+                } else if (gesture === 'OPEN') {
+                    state.targetModeVal = 0.0;
+                    statusText.innerText = "状态: 散开 (Scatter)";
+                } else if (gesture === 'PINCH') {
+                    state.targetZoom = 10;
+                    statusText.innerText = "状态: 放大 (Zoom)";
+                } else {
+                    state.targetZoom = 18;
+                }
+
+                const centerX = landmarks[9].x; 
+                // 增加灵敏度，因为手机屏幕小，手移动范围小
+                const targetRot = (centerX - 0.5) * 5; 
+                state.targetRotationY = targetRot;
+
+            } else {
+                statusText.innerText = "未检测到手部";
+            }
+        }
+
+        // --- 6. 动画 ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const dt = clock.getDelta();
+            
+            state.currentModeVal += (state.targetModeVal - state.currentModeVal) * 3.0 * dt; // 加快一点响应速度
+            state.rotationY += (state.targetRotationY - state.rotationY) * 3.0 * dt;
+            state.zoom += (state.targetZoom - state.zoom) * 2.0 * dt;
+
+            material.uniforms.uTime.value = clock.getElapsedTime();
+            material.uniforms.uMix.value = state.currentModeVal;
+
+            points.rotation.y = state.rotationY;
+            camera.position.z = state.zoom;
+            camera.lookAt(0, 4, 0);
+
+            composer.render();
+        }
+
+        setupMediaPipe();
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
